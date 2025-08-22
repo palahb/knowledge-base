@@ -1,0 +1,204 @@
+# Memoization in React: `useMemo` and `useCallback`
+
+A clear, practical guide to when and why to memoize values and functions in React.
+
+---
+
+## Core ideas
+
+Memoization caches the **result of a computation** so React can reuse it on later renders until its **inputs change**. It reduces *recomputation* and preserves *reference stability* for objects, arrays, and functions.
+
+### Value vs reference equality
+- Primitives compare by **value**: `5 === 5` is `true`.
+- Objects/arrays/functions compare by **reference**: `{}` !== `{}` every time you create a new one.
+
+### Reference stability
+“Stable reference” means the same object/function **instance** is reused across renders. React’s shallow comparisons rely on this.
+
+### When memoization helps
+- You have an **expensive calculation** you don’t want to redo on every render.
+- You must keep **stable references** for props passed to `React.memo` children or for **hook dependency arrays**.
+
+---
+
+## `useMemo`: memoize **values**
+
+```tsx
+import { useMemo } from "react";
+
+function Example({ items }: { items: number[] }) {
+  // Expensive derivation runs only when items changes
+  const sorted = useMemo(() => {
+    // imagine this sort is expensive (large data or complex comparator)
+    return [...items].sort((a, b) => a - b);
+  }, [items]);
+
+  return <div>{sorted.length}</div>;
+}
+```
+
+### When to use `useMemo`
+1. **Expensive derivations**
+   - heavy `map/filter/reduce`, complex `sort`, CPU-heavy transforms.
+2. **Stable references for children or dependencies**
+   - You pass derived objects/arrays to a `React.memo` child.
+   - You include a derived object/array in a dependency list (`useEffect`, `useMemo`, `useCallback`).
+
+### When **not** to use `useMemo`
+- Cheap computations inside the same component.
+- You do not pass the derived value to a memoized child and do not use it in dependencies.
+- Default to a plain `const`. Add `useMemo` only after a measurable need.
+
+### Same-component rule of thumb
+- **Cheap derivation** on render → **no `useMemo`**.
+- **Expensive derivation** on render → **use `useMemo`** so it runs only when inputs change.
+
+### Examples
+
+#### Cheap mapping (no `useMemo`)
+```tsx
+function Cheap({ items }: { items: { id: number; name: string }[] }) {
+  const labels = items.map(x => ({ id: x.id, label: x.name.toUpperCase() }));
+  return <div>{labels.length}</div>;
+}
+```
+
+#### Expensive mapping (use `useMemo`)
+```tsx
+function Expensive({ items }: { items: DataPoint[] }) {
+  const derived = useMemo(() => {
+    return items.map(x => ({
+      id: x.id,
+      summary: heavyAnalysis(x.payload),   // CPU heavy
+      stats: bigMath(x.values),            // CPU heavy
+    }));
+  }, [items]);
+
+  return <div>{derived.length}</div>;
+}
+```
+
+#### Stable prop for `React.memo` child
+```tsx
+const Child = React.memo(({ cfg }: { cfg: { theme: string } }) => {
+  return <div>{cfg.theme}</div>;
+});
+
+function Parent() {
+  // Without useMemo this object is new each render, Child re-renders.
+  const cfg = useMemo(() => ({ theme: "dark" }), []);
+  return <Child cfg={cfg} />;
+}
+```
+
+---
+
+## `React.memo`: memoize **components**
+
+`React.memo(Component)` re-renders the component only if its **props changed** by shallow comparison.
+
+- Effective only when **prop references** remain stable across renders.
+- Pair with `useMemo`/`useCallback` for non-primitives.
+
+```tsx
+const Child = React.memo(function Child({ data }: { data: number[] }) {
+  return <div>{data.join(", ")}</div>;
+});
+
+function Parent({ nums }: { nums: number[] }) {
+  // Keep reference stable so Child can skip renders when nums is unchanged
+  const doubled = useMemo(() => nums.map(n => n * 2), [nums]);
+  return <Child data={doubled} />;
+}
+```
+
+Do **not** wrap tiny components or components whose props always change.
+
+---
+
+## `useCallback`: memoize **functions**
+
+`useCallback` returns the same **function reference** between renders unless its dependencies change. Use it for the same reasons as `useMemo`, but for functions.
+
+```tsx
+import { useCallback, memo, useState } from "react";
+
+const Child = memo(({ onClick }: { onClick: () => void }) => {
+  return <button onClick={onClick}>Click</button>;
+});
+
+export default function Parent() {
+  const [count, setCount] = useState(0);
+
+  // Stable function reference. Child won’t re-render when count changes.
+  const handleClick = useCallback(() => {
+    console.log("clicked");
+  }, []);
+
+  return (
+    <>
+      <button onClick={() => setCount(c => c + 1)}>Inc {count}</button>
+      <Child onClick={handleClick} />
+    </>
+  );
+}
+```
+
+### When to use `useCallback`
+1. You pass a function prop to a **`React.memo` child** and want to avoid re-renders.
+2. The function is part of a **dependency array** for another hook.
+3. Function creation is **expensive** or closes over heavy state (rare).
+
+### When **not** to use `useCallback`
+- Simple inline handlers in small components.
+- You are not passing the function to memoized children and not using it in dependencies.
+
+---
+
+## Practical checklists
+
+### Do I need `useMemo`?
+- Is the computation **expensive**?  
+  - Yes → consider `useMemo`.  
+  - No → skip.
+- Do I pass the result to a **`React.memo` child** or use it in a **dependency array**?  
+  - Yes → stabilize with `useMemo`.  
+  - No → skip.
+
+### Do I need `useCallback`?
+- Is the function passed to a **`React.memo` child**?  
+  - Yes → use `useCallback`.  
+  - No → skip unless used in dependencies.
+- Is it used in a **dependency array**?  
+  - Yes → use `useCallback`.  
+  - No → skip.
+
+---
+
+## Common pitfalls
+
+- **Memoizing everything** adds overhead and can slow the app.
+- Forgetting to stabilize non-primitive props makes `React.memo` ineffective.
+- Missing dependencies in `useMemo`/`useCallback` causes stale values or bugs. Always include all used values.
+
+---
+
+## TL;DR
+
+- Default: write clean code with plain `const` and inline handlers.
+- Add `useMemo` for **expensive value derivations** or **reference stability** needs.
+- Add `useCallback` for **function props** to `React.memo` children or when used in **dependencies**.
+- Measure before optimizing. Keep dependencies correct.
+
+```tsx
+// Pattern summary
+
+// Value memoization
+const value = useMemo(() => compute(inputA, inputB), [inputA, inputB]);
+
+// Function memoization
+const handler = useCallback(() => doThing(value), [value]);
+
+// Component memoization
+const BigChild = React.memo(BigChildImpl);
+```
